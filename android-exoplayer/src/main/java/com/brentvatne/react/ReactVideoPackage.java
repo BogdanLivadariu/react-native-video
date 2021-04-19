@@ -1,5 +1,7 @@
 package com.brentvatne.react;
 
+import android.util.Log;
+
 import com.brentvatne.exoplayer.DefaultReactExoplayerConfig;
 import com.brentvatne.exoplayer.ReactExoplayerConfig;
 import com.brentvatne.exoplayer.ReactExoplayerViewManager;
@@ -36,9 +38,10 @@ public class ReactVideoPackage implements ReactPackage {
 
     @Override
     public List<ViewManager> createViewManagers(ReactApplicationContext reactContext) {
+        Log.d("BOBO", "reated view");
         if (config == null) {
             config = new DefaultReactExoplayerConfig(reactContext);
         }
-        return Collections.singletonList(new ReactExoplayerViewManager(config));
+        return Collections.singletonList(new ReactExoplayerViewManager(reactContext, config));
     }
 }

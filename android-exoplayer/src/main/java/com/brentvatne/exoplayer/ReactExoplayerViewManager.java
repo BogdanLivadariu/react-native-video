@@ -6,6 +6,7 @@ import android.text.TextUtils;
 import android.util.Log;
 
 import com.facebook.react.bridge.Dynamic;
+import com.facebook.react.bridge.ReactContext;
 import com.facebook.react.bridge.ReadableArray;
 import com.facebook.react.bridge.ReadableMap;
 import com.facebook.react.bridge.ReadableMapKeySetIterator;
@@ -13,13 +14,19 @@ import com.facebook.react.common.MapBuilder;
 import com.facebook.react.uimanager.ThemedReactContext;
 import com.facebook.react.uimanager.ViewGroupManager;
 import com.facebook.react.uimanager.annotations.ReactProp;
-import com.facebook.react.bridge.ReactMethod;
-import com.google.android.exoplayer2.util.Util;
+import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.DefaultLoadControl;
+import com.google.android.exoplayer2.DefaultRenderersFactory;
+import com.google.android.exoplayer2.SimpleExoPlayer;
+import com.google.android.exoplayer2.trackselection.AdaptiveTrackSelection;
+import com.google.android.exoplayer2.trackselection.DefaultTrackSelector;
+import com.google.android.exoplayer2.trackselection.TrackSelection;
+import com.google.android.exoplayer2.upstream.DefaultAllocator;
 import com.google.android.exoplayer2.upstream.RawResourceDataSource;
+import com.google.android.exoplayer2.util.Util;
 
-import java.util.HashMap;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
@@ -28,6 +35,7 @@ import javax.annotation.Nullable;
 public class ReactExoplayerViewManager extends ViewGroupManager<ReactExoplayerView> {
 
     private static final String REACT_CLASS = "RCTVideo";
+    private static final String TAG = ReactExoplayerViewManager.class.getSimpleName();
 
     private static final String PROP_SRC = "src";
     private static final String PROP_SRC_URI = "uri";
@@ -71,10 +79,15 @@ public class ReactExoplayerViewManager extends ViewGroupManager<ReactExoplayerVi
     private static final String PROP_HIDE_SHUTTER_VIEW = "hideShutterView";
     private static final String PROP_CONTROLS = "controls";
 
-    private ReactExoplayerConfig config;
+    private final ReactExoplayerConfig config;
 
-    public ReactExoplayerViewManager(ReactExoplayerConfig config) {
+    private final SimpleExoPlayer player;
+    private DefaultTrackSelector trackSelector;
+
+    public ReactExoplayerViewManager(ReactContext reactContext, ReactExoplayerConfig config) {
         this.config = config;
+
+        this.player = initializePlayer(reactContext);
     }
 
     @Override
@@ -84,16 +97,19 @@ public class ReactExoplayerViewManager extends ViewGroupManager<ReactExoplayerVi
 
     @Override
     protected ReactExoplayerView createViewInstance(ThemedReactContext themedReactContext) {
-        return new ReactExoplayerView(themedReactContext, config);
+        Log.d(TAG, "createViewInstance: ");
+        return new ReactExoplayerView(themedReactContext, config, player, trackSelector);
     }
 
     @Override
     public void onDropViewInstance(ReactExoplayerView view) {
+        Log.d(TAG, "onDropViewInstance: ");
         view.cleanUpResources();
     }
 
     @Override
-    public @Nullable Map<String, Object> getExportedCustomDirectEventTypeConstants() {
+    public @Nullable
+    Map<String, Object> getExportedCustomDirectEventTypeConstants() {
         MapBuilder.Builder<String, Object> builder = MapBuilder.builder();
         for (String event : VideoEventEmitter.Events) {
             builder.put(event, MapBuilder.of("registrationName", event));
@@ -102,7 +118,8 @@ public class ReactExoplayerViewManager extends ViewGroupManager<ReactExoplayerVi
     }
 
     @Override
-    public @Nullable Map<String, Object> getExportedViewConstants() {
+    public @Nullable
+    Map<String, Object> getExportedViewConstants() {
         return MapBuilder.<String, Object>of(
                 "ScaleNone", Integer.toString(ResizeMode.RESIZE_MODE_FIT),
                 "ScaleAspectFit", Integer.toString(ResizeMode.RESIZE_MODE_FIT),
@@ -155,15 +172,15 @@ public class ReactExoplayerViewManager extends ViewGroupManager<ReactExoplayerVi
             }
         } else {
             int identifier = context.getResources().getIdentifier(
-                uriString,
-                "drawable",
-                context.getPackageName()
+                    uriString,
+                    "drawable",
+                    context.getPackageName()
             );
             if (identifier == 0) {
                 identifier = context.getResources().getIdentifier(
-                    uriString,
-                    "raw",
-                    context.getPackageName()
+                        uriString,
+                        "raw",
+                        context.getPackageName()
                 );
             }
             if (identifier > 0) {
@@ -192,7 +209,7 @@ public class ReactExoplayerViewManager extends ViewGroupManager<ReactExoplayerVi
 
     @ReactProp(name = PROP_SELECTED_VIDEO_TRACK)
     public void setSelectedVideoTrack(final ReactExoplayerView videoView,
-                                     @Nullable ReadableMap selectedVideoTrack) {
+                                      @Nullable ReadableMap selectedVideoTrack) {
         String typeString = null;
         Dynamic value = null;
         if (selectedVideoTrack != null) {
@@ -206,7 +223,7 @@ public class ReactExoplayerViewManager extends ViewGroupManager<ReactExoplayerVi
 
     @ReactProp(name = PROP_SELECTED_AUDIO_TRACK)
     public void setSelectedAudioTrack(final ReactExoplayerView videoView,
-                                     @Nullable ReadableMap selectedAudioTrack) {
+                                      @Nullable ReadableMap selectedAudioTrack) {
         String typeString = null;
         Dynamic value = null;
         if (selectedAudioTrack != null) {
@@ -340,7 +357,8 @@ public class ReactExoplayerViewManager extends ViewGroupManager<ReactExoplayerVi
                 || uriString.startsWith("asset://");
     }
 
-    private @ResizeMode.Mode int convertToIntDef(String resizeModeOrdinalString) {
+    private @ResizeMode.Mode
+    int convertToIntDef(String resizeModeOrdinalString) {
         if (!TextUtils.isEmpty(resizeModeOrdinalString)) {
             int resizeModeOrdinal = Integer.parseInt(resizeModeOrdinalString);
             return ResizeMode.toResizeMode(resizeModeOrdinal);
@@ -371,4 +389,34 @@ public class ReactExoplayerViewManager extends ViewGroupManager<ReactExoplayerVi
 
         return result;
     }
+
+    private SimpleExoPlayer initializePlayer(ReactContext context) {
+        Log.d("BOBO-" + TAG, String.format("initializePlayer: %s", this.player == null));
+//        ReactExoplayerView self = this;
+        // This ensures all props have been settled, to avoid async racing conditions.
+
+        TrackSelection.Factory videoTrackSelectionFactory = new AdaptiveTrackSelection.Factory();
+        trackSelector = new DefaultTrackSelector(videoTrackSelectionFactory);
+//                    trackSelector.setParameters(trackSelector.buildUponParameters()
+//                            .setMaxVideoBitrate(maxBitRate == 0 ? Integer.MAX_VALUE : maxBitRate));
+
+        DefaultAllocator allocator = new DefaultAllocator(true, C.DEFAULT_BUFFER_SEGMENT_SIZE);
+        DefaultLoadControl.Builder defaultLoadControlBuilder = new DefaultLoadControl.Builder();
+        defaultLoadControlBuilder.setAllocator(allocator);
+//                    defaultLoadControlBuilder.setBufferDurationsMs(minBufferMs, maxBufferMs, bufferForPlaybackMs, bufferForPlaybackAfterRebufferMs);
+        defaultLoadControlBuilder.setTargetBufferBytes(-1);
+        defaultLoadControlBuilder.setPrioritizeTimeOverSizeThresholds(true);
+        DefaultLoadControl defaultLoadControl = defaultLoadControlBuilder.createDefaultLoadControl();
+        DefaultRenderersFactory renderersFactory =
+                new DefaultRenderersFactory(context)
+                        .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_OFF);
+
+
+        return new SimpleExoPlayer.Builder(context, renderersFactory)
+                .setTrackSelector(trackSelector)
+                .setLoadControl(defaultLoadControl)
+                .build();
+    }
+
+
 }

@@ -2,7 +2,12 @@ package com.brentvatne.exoplayer;
 
 import android.annotation.TargetApi;
 import android.content.Context;
+
+import androidx.annotation.RequiresApi;
 import androidx.core.content.ContextCompat;
+
+import android.os.Build;
+import android.os.Handler;
 import android.util.AttributeSet;
 import android.util.Log;
 import android.view.Gravity;
@@ -26,8 +31,10 @@ import com.google.android.exoplayer2.trackselection.TrackSelectionArray;
 import com.google.android.exoplayer2.ui.SubtitleView;
 
 import java.util.List;
+import java.util.function.Consumer;
+import java.util.function.Supplier;
 
-@TargetApi(16)
+@TargetApi(24)
 public final class ExoPlayerView extends FrameLayout {
 
     private View surfaceView;
@@ -89,8 +96,15 @@ public final class ExoPlayerView extends FrameLayout {
         if (surfaceView instanceof TextureView) {
             player.setVideoTextureView((TextureView) surfaceView);
         } else if (surfaceView instanceof SurfaceView) {
-            player.setVideoSurfaceView((SurfaceView) surfaceView);
+            runOnExo(() -> player, p -> p.setVideoSurfaceView((SurfaceView) surfaceView));
+//            player.setVideoSurfaceView((SurfaceView) surfaceView);
         }
+    }
+
+    protected void runOnExo(Supplier<SimpleExoPlayer> p, Consumer<SimpleExoPlayer> c) {
+        new Handler(p.get().getApplicationLooper()).post(() -> {
+            c.accept(p.get());
+        });
     }
 
     private void updateSurfaceView() {
